@@ -1,17 +1,20 @@
-import torch
-from matplotlib import pyplot as plt 
-from tqdm import tqdm
-from torch.amp import GradScaler, autocast
 import copy
-import numpy as np
 
-from ddpm_utils.args import * 
+import numpy as np
+import torch
+from matplotlib import pyplot as plt
+from torch.amp import GradScaler, autocast
+from tqdm import tqdm
+
+from ddpm_utils.args import *
 
 torch.manual_seed(42)
+
 
 def one_param(m):
     "get model first parameter"
     return next(iter(m.parameters()))
+
 
 class EMA:
     def __init__(self, beta):
@@ -20,7 +23,9 @@ class EMA:
         self.step = 0
 
     def update_model_average(self, ma_model, current_model):
-        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+        for current_params, ma_params in zip(
+            current_model.parameters(), ma_model.parameters()
+        ):
             old_weight, up_weight = ma_params.data, current_params.data
             ma_params.data = self.update_average(old_weight, up_weight)
 
@@ -45,7 +50,6 @@ class Trainer:
     def __init__(self, args, eps_model, diffusion_model):
 
         self.eps_model = eps_model.to(args.device)
-
         self.diffusion = diffusion_model
 
         self.optimizer = torch.optim.Adam(
@@ -57,21 +61,21 @@ class Trainer:
         self.ema = EMA(0.995)
         self.ema_model = copy.deepcopy(self.eps_model).eval().requires_grad_(False)
 
-
-
     def train_epoch(self, dataloader, scaler):
-        current_lr = round(self.optimizer.param_groups[0]['lr'], 5)
+        current_lr = round(self.optimizer.param_groups[0]["lr"], 5)
         i = 0
-        running_loss = 0.
-        with tqdm(range(len(dataloader)), desc=f'Epoch : - lr: - Loss :') as progress:
+        running_loss = 0.0
+        with tqdm(range(len(dataloader)), desc=f"Epoch : - lr: - Loss :") as progress:
             for x0 in dataloader:
                 i += 1
                 # Move data to device
                 x0 = x0.to(self.args.device)
                 # Calculate the loss
-                with autocast(device_type=args.device, enabled=self.args.fp16_precision):
+                with autocast(
+                    device_type=args.device, enabled=self.args.fp16_precision
+                ):
                     loss = self.diffusion.loss(x0)
-                
+
                 # Zero gradients
                 self.optimizer.zero_grad()
                 # Backward pass
@@ -84,35 +88,39 @@ class Trainer:
 
                 self.loss_per_iter.append(running_loss / i)
                 progress.update()
-                progress.set_description(f'Epoch: {self.current_epoch}/{self.args.epochs} - lr: {current_lr} - Loss: {round(running_loss / i, 2)}')
-            progress.set_description(f'Epoch: {self.current_epoch}/{self.args.epochs} - lr: {current_lr} - Loss: {round(running_loss / len(dataloader), 2)}')
+                progress.set_description(
+                    f"Epoch: {self.current_epoch}/{self.args.epochs} - lr: {current_lr} - Loss: {round(running_loss / i, 2)}"
+                )
+            progress.set_description(
+                f"Epoch: {self.current_epoch}/{self.args.epochs} - lr: {current_lr} - Loss: {round(running_loss / len(dataloader), 2)}"
+            )
 
             # Step the scheduler after each epoch
             self.scheduler.step()
 
-
     def train(self, dataloader):
-            scaler = GradScaler(device=self.args.device, enabled=self.args.fp16_precision)
-            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.1)
-            start_epoch = self.current_epoch
-            self.loss_per_iter = []
-            for current_epoch in range(start_epoch, self.args.epochs):
-                self.current_epoch = current_epoch
-                self.train_epoch(dataloader, scaler)
+        scaler = GradScaler(device=self.args.device, enabled=self.args.fp16_precision)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(
+            self.optimizer, step_size=10, gamma=0.1
+        )
+        start_epoch = self.current_epoch
+        self.loss_per_iter = []
+        for current_epoch in range(start_epoch, self.args.epochs):
+            self.current_epoch = current_epoch
+            self.train_epoch(dataloader, scaler)
 
-                if current_epoch % self.args.show_every_n_epochs == 0:
-                    self.sample()
+            if current_epoch % self.args.show_every_n_epochs == 0:
+                self.sample()
 
-                if (current_epoch + 1) % self.args.save_every_n_epochs == 0:
-                    self.save_model()
-
+            if (current_epoch + 1) % self.args.save_every_n_epochs == 0:
+                self.save_model()
 
     def sample(self, n_steps=None, set_seed=False):
         if set_seed:
             torch.manual_seed(42)
         if n_steps is None:
             n_steps = self.args.n_steps
-            
+
         with torch.no_grad():
             # $x_T \sim p(x_T) = \mathcal{N}(x_T; \mathbf{0}, \mathbf{I})$
             x = torch.randn(
@@ -126,12 +134,22 @@ class Trainer:
             )
             if self.args.nb_save is not None:
                 saving_steps = [self.args["n_steps"] - 1]
+
             # Remove noise for $T$ steps
             for t_ in tqdm(range(n_steps)):
-                
-                # TODO: Sample x_t 
-                raise NotImplementedError
-            
+
+                # first we have to define the time tensor -- for each sample, the `t` is the same.
+                # here remember that we're going in reverse, as T starts from `self.args.n_steps` and goes down to zero
+                t = torch.full(
+                    (self.args.n_samples,),
+                    n_steps - 1 - t_,
+                    dtype=torch.long,
+                    device=x.device,
+                )
+
+                # TODO: Sample x_t given x_{t+1}
+                x = self.diffusion.p_sample(x, t)
+
                 if self.args.nb_save is not None and t_ in saving_steps:
                     print(f"Showing/saving samples from epoch {self.current_epoch}")
                     self.show_save(
@@ -140,14 +158,18 @@ class Trainer:
                         save=True,
                         file_name=f"DDPM_epoch_{self.current_epoch}_sample_{t_}.png",
                     )
+
         return x
 
     def save_model(self):
-        torch.save({
-                'epoch': self.current_epoch,
-                'model_state_dict': self.eps_model.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-                }, args.MODEL_PATH)
+        torch.save(
+            {
+                "epoch": self.current_epoch,
+                "model_state_dict": self.eps_model.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+            },
+            args.MODEL_PATH,
+        )
 
     def show_save(self, img_tensor, show=True, save=True, file_name="sample.png"):
         fig, axs = plt.subplots(3, 3, figsize=(10, 10))  # Create a 4x4 grid of subplots
@@ -162,13 +184,19 @@ class Trainer:
 
         plt.tight_layout()
         if save:
-            plt.savefig('images/' + file_name)
+            plt.savefig("images/" + file_name)
         if show:
             plt.show()
         plt.close(fig)
-        
-        
-    def generate_intermediate_samples(self, n_samples=4, img_size=32, steps_to_show=[0,999], n_steps=None, set_seed=False):
+
+    def generate_intermediate_samples(
+        self,
+        n_samples=4,
+        img_size=32,
+        steps_to_show=[0, 999],
+        n_steps=None,
+        set_seed=False,
+    ):
         """
         Generate multiple images and return intermediate steps of the diffusion process
         Args:
@@ -178,25 +206,31 @@ class Trainer:
         Returns:
             List of tensors representing the images at different steps
         """
-        
+
         if set_seed:
             torch.manual_seed(42)
-        
+
         if n_steps is None:
             n_steps = args.n_steps
-            
+
         # Start from random noise
-        x = torch.randn(n_samples, 1, img_size, img_size, device=args.device, requires_grad=False)
+        x = torch.randn(
+            n_samples, 1, img_size, img_size, device=args.device, requires_grad=False
+        )
 
         # Store images at each step we want to show
         images = []
         images.append(x.detach().cpu().numpy())  # Initial noise
 
-        for step in tqdm(range(1, n_steps+1, 1)):
+        for step in tqdm(range(1, n_steps + 1, 1)):
             # TODO: Generate intermediate steps
             # Hint: if GPU crashes, it might be because you accumulate unused gradient ... don't forget to remove gradient
-            raise NotImplementedError
-        
+
+            t = torch.full(
+                (n_samples,), n_steps - step, dtype=torch.long, device=x.device
+            )
+            x = self.diffusion.p_sample(x, t)
+
             # Store intermediate result if it's a step we want to display
             if step in steps_to_show:
                 images.append(x.detach().cpu().numpy())

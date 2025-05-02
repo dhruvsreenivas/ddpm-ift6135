@@ -148,19 +148,10 @@ def kl_gaussian_gaussian_mc(mu_q, logvar_q, mu_p, logvar_p, num_samples=1):
     std_q = torch.exp(0.5 * logvar_q)
     z = mu_q + torch.randn_like(std_q) * std_q
 
-    # now we compute log q(z) and log p(z) -> [batch_size, num_samples] each at the end after reduction
-    log_q = -0.5 * (
-        logvar_q + (z - mu_q) ** 2 / torch.exp(logvar_q) + torch.log(2 * pi)
-    )
-    log_p = -0.5 * (
-        logvar_p + (z - mu_p) ** 2 / torch.exp(logvar_p) + torch.log(2 * pi)
-    )
+    # now we compute log q(z) and log p(z) -> [batch_size], where each of these is a log likelihood sum over `num_samples * dim` event dims
+    # in order to get a mean over the num samples, we have to divide by num samples
+    log_q = log_likelihood_normal(mu_q, logvar_q, z) / num_samples
+    log_p = log_likelihood_normal(mu_p, logvar_p, z) / num_samples
 
-    log_q = torch.sum(log_q, dim=-1)
-    log_p = torch.sum(log_p, dim=-1)
-
-    # now compute direct log diff
-    kl_mc_per_sample = log_q - log_p
-    kl_mc = kl_mc_per_sample.mean(-1)
-
+    kl_mc = log_q - log_p
     return kl_mc
