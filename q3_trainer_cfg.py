@@ -190,7 +190,7 @@ class Trainer:
                         labels,
                         show=True,
                         save=True,
-                        file_name=f"DDPM_epoch_{self.current_epoch}_sample_{t_}.png",
+                        file_name=f"CFG_epoch_{self.current_epoch}_sample_{t_}.png",
                     )
             self.eps_model.train()
 
@@ -221,7 +221,7 @@ def show_save(img_tensor, labels=None, show=True, save=True, file_name="sample.p
 
     plt.tight_layout()
     if save:
-        plt.savefig(file_name)
+        plt.savefig("images/" + file_name)
     if show:
         plt.show()
     plt.close(fig)

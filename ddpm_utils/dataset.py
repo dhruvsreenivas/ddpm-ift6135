@@ -1,5 +1,7 @@
-import torchvision 
-from args import * 
+import torchvision
+
+from ddpm_utils.args import *
+
 
 class MNISTDataset(torchvision.datasets.MNIST):
     def __init__(self):
@@ -10,9 +12,7 @@ class MNISTDataset(torchvision.datasets.MNIST):
             ]
         )
 
-        super().__init__(
-            ".", train=True, download=True, transform=transform
-        )
+        super().__init__(".", train=True, download=True, transform=transform)
 
     def __getitem__(self, item):
         return super().__getitem__(item)[0]

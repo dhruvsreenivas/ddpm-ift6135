@@ -2,12 +2,14 @@ from __future__ import print_function
 
 import argparse
 
+import matplotlib.pyplot as plt
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
+from tqdm import tqdm
 
 from q1_vae import *
 
@@ -54,15 +56,13 @@ else:
 
 kwargs = {"num_workers": 1, "pin_memory": True} if args.cuda else {}
 train_loader = DataLoader(
-    datasets.MNIST(
-        "../data", train=True, download=True, transform=transforms.ToTensor()
-    ),
+    datasets.MNIST(".", train=True, download=True, transform=transforms.ToTensor()),
     batch_size=args.batch_size,
     shuffle=True,
     **kwargs
 )
 test_loader = DataLoader(
-    datasets.MNIST("../data", train=False, transform=transforms.ToTensor()),
+    datasets.MNIST(".", train=False, transform=transforms.ToTensor()),
     batch_size=args.batch_size,
     shuffle=False,
     **kwargs
@@ -113,12 +113,14 @@ def loss_function(recon_x, x, mu, logvar):
     kl = kl_gaussian_gaussian_analytic(
         mu, logvar, torch.zeros_like(mu), torch.zeros_like(logvar)
     ).sum()
-    recon_loss = log_likelihood_bernoulli(recon_x, x).sum()
+    recon_loss = -log_likelihood_bernoulli(recon_x, x).sum()
 
     return recon_loss + kl
 
 
 def train(epoch):
+    """Trains and evaluates the model. Returns training and evaluation losses for it."""
+
     model.train()
     train_loss = 0
     for batch_idx, (data, _) in enumerate(train_loader):
@@ -140,15 +142,73 @@ def train(epoch):
                 )
             )
 
+    # now after the epoch is done, we evaluate the model
+    avg_train_loss, avg_eval_loss = evaluate()
+
     print(
-        "====> Epoch: {} Average loss: {:.4f}".format(
+        "====> Epoch: {} Average training loss: {:.4f}".format(
             epoch, train_loss / len(train_loader.dataset)
         )
     )
+    print(
+        "====> Epoch: {} Average validation loss: {:.4f}".format(epoch, avg_eval_loss)
+    )
+
+    return avg_train_loss, avg_eval_loss
+
+
+@torch.no_grad()
+def evaluate():
+    """Evaluates model on training and test set."""
+
+    model.eval()
+
+    train_loss = 0
+    for data, _ in train_loader:
+        data = data.to(device)
+
+        recon_batch, mu, logvar = model(data)
+        loss = loss_function(recon_batch, data, mu, logvar)
+        train_loss += loss.item()
+
+    eval_loss = 0
+    for data, _ in test_loader:
+        data = data.to(device)
+
+        recon_batch, mu, logvar = model(data)
+        loss = loss_function(recon_batch, data, mu, logvar)
+        eval_loss += loss.item()
+
+    # compute average over length of training dataset.
+    return train_loss / len(train_loader.dataset), eval_loss / len(test_loader.dataset)
 
 
 if __name__ == "__main__":
-    for epoch in range(1, args.epochs + 1):
-        train(epoch)
+    training_losses, validation_losses = [], []
+    for epoch in tqdm(range(1, args.epochs + 1)):
+        train_loss, eval_loss = train(epoch)
 
+        training_losses.append(train_loss)
+        validation_losses.append(eval_loss)
+
+        if epoch == args.epochs:
+            print("Final training loss:", train_loss)
+            print("Final validation loss:", eval_loss)
+
+    # now we plot the training and validation losses.
+    xs = np.arange(args.epochs)
+
+    plt.plot(xs, training_losses, color="red", label="train")
+    plt.plot(xs, validation_losses, color="blue", label="eval")
+
+    plt.title("Training/validation losses")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.legend(loc="upper right")
+
+    # save the model
     torch.save(model, "model.pt")
+
+    # save the plot
+    plt.tight_layout()
+    plt.savefig("images/vae_train_eval.png")
