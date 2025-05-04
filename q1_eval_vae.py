@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from torch.nn import functional as F
 
@@ -54,10 +55,10 @@ def visualize_disentanglement(scale, samples_per_latent_factor=5):
         # now add `scale` to z at the dim provided
         amt = F.one_hot(torch.tensor(dim).to(device), num_classes=latent_dim) * scale
         amt = amt.unsqueeze(0).float()
-        z_interpolated = z + amt
+        z_modified = z + amt
 
         # decode the output
-        samples = model.decode(z_interpolated).view(-1, 28, 28)
+        samples = model.decode(z_modified).view(-1, 28, 28)
 
         # add to the images dir.
         images.append(samples)
@@ -73,6 +74,52 @@ def visualize_disentanglement(scale, samples_per_latent_factor=5):
 
     plt.tight_layout()
     plt.savefig("images/vae_disentangled_samples.png")
+    plt.close(fig)
+
+
+@torch.no_grad()
+def visualize_disentanglement_vary_epsilon(init_scale, final_scale):
+    """Checks disentanglement in the latent space and decodes the output, where instead of having 5 Gaussian samples, we have 5 different epsilon gradients."""
+
+    # set up the images list
+    images = []
+
+    # set up the scaling levels
+    scales = np.linspace(init_scale, final_scale, num=5)
+
+    # start with an initial z vector
+    z = torch.randn(latent_dim, dtype=torch.float32, device=device)
+
+    # for each dim, we log each of the images appropriately
+    for dim in range(latent_dim):
+        samples = []
+
+        amt = F.one_hot(torch.tensor(dim).to(device), num_classes=latent_dim)
+        amt = amt.unsqueeze(0).float()
+
+        # now, for each scale factor we care about, we interpolate accordingly
+        for scale in scales:
+            scaled_amt = amt * scale
+            z_modified = z + scaled_amt
+
+            # decode the output
+            sample = model.decode(z_modified).view(28, 28)
+            samples.append(sample)
+
+        # add samples to global images dir
+        images.append(samples)
+
+    # now we plot
+    fig, axes = plt.subplots(latent_dim, 5, figsize=(5, 20))
+    for i in range(latent_dim):
+        for j in range(5):
+            img = images[i][j].squeeze().cpu().numpy()
+
+            axes[i, j].imshow(img, cmap="gray")
+            axes[i, j].axis("off")  # Hide the axis
+
+    plt.tight_layout()
+    plt.savefig("images/vae_disentangled_samples_vary_epsilon.png")
     plt.close(fig)
 
 
@@ -144,5 +191,6 @@ def interpolate_data():
 if __name__ == "__main__":
     # generate_samples()
     # visualize_disentanglement(scale=2.0)
+    visualize_disentanglement_vary_epsilon(0.5, 3.0)
     # interpolate_latent()
-    interpolate_data()
+    # interpolate_data()

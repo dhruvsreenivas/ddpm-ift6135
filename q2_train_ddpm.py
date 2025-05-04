@@ -36,6 +36,7 @@ def plot_and_save_intermediate_samples(images, steps_to_show, n_samples):
 
     plt.tight_layout()
     plt.savefig("images/ddpm_post_training_intermediate_samples.png")
+    plt.close(fig)
 
 
 def train():
